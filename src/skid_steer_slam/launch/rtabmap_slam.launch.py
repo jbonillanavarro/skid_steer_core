@@ -1,32 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Skid-Steer Robot SLAM Launch File
-# ─────────────────────────────────────────────────────────────────────────────
-#
-# Requirements:
-#   Isaac Sim running with Jackal robot publishing:
-#       /scan                        (sensor_msgs/LaserScan)
-#       /rgb                         (sensor_msgs/Image)
-#       /camera_info                 (sensor_msgs/CameraInfo)
-#       /depth                       (sensor_msgs/Image)
-#       /odom                        (nav_msgs/Odometry)
-#       /tf                          (world → odom → base_link → sensors)
-#       /clock                       (rosgraph_msgs/Clock)
-#
-# Usage:
-#   SLAM mode (default):
-#     $ ros2 launch ss_slam skid_steer_slam.launch.py
-#
-#   Localization mode (map already built):
-#     $ ros2 launch ss_slam skid_steer_slam.launch.py localization:=true
-#
-#   Without visualization:
-#     $ ros2 launch ss_slam skid_steer_slam.launch.py rtabmap_viz:=false
-#
-#   Show all available arguments:
-#     $ ros2 launch ss_slam skid_steer_slam.launch.py --show-args
-#
-# ─────────────────────────────────────────────────────────────────────────────
-
 # ── Imports ───────────────────────────────────────────────────────────────────
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -37,13 +8,13 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    # ── Referencias a los argumentos (lazy, se resuelven al ejecutar) ─────────
+    # ── Argument references (lazy, resolved at runtime) ─────────
     use_sim_time = LaunchConfiguration('use_sim_time')
     localization  = LaunchConfiguration('localization')
     robot_ns      = LaunchConfiguration('robot_ns')
     rtabmap_viz   = LaunchConfiguration('rtabmap_viz')
 
-    # ── Declaración de argumentos ─────────────────────────────────────────────
+    # ── Declare launch arguments ─────────────────────────────────────────────
     arg_use_sim_time = DeclareLaunchArgument(
         'use_sim_time',
         default_value='true',
@@ -69,50 +40,50 @@ def generate_launch_description():
         choices=['true', 'false'],
         description='Start rtabmap_viz visualization window.')
 
-    # ── Parámetros de los nodos ───────────────────────────────────────────────
+    # ── Node parameters ──────────────────────────────────────────────────────
 
-    # Parámetros específicos de RTAB-Map
+    # RTAB-Map specific parameters
     rtabmap_parameters = {
-        'subscribe_rgbd':         True,    # suscribirse a imagen RGB-D sincronizada
-        'subscribe_scan':         True,    # suscribirse al lidar
-        'use_action_for_goal':    True,    # usar action server para goals de Nav2
-        'odom_sensor_sync':       True,    # sincronizar odometría con sensores
-        'Mem/NotLinkedNodesKept': 'false', # no guardar nodos sin conexión en memoria
-        'Grid/RangeMin':          '0.7',   # ignorar puntos del lidar a <0.7m (cuerpo del robot)
-        'RGBD/OptimizeMaxError':  '2',     # rechazar loop closures con error alto
-        'Grid/DepthMin':          '0.5',   # ignorar puntos de profundidad a <0.5m
-        'Grid/DepthMax':          '5.0',   # ignorar puntos de profundidad a >5m
-        'Mem/SaveDepth16Format':  'false', # depth en float32 (metros), no uint16 (mm)
+        'subscribe_rgbd':         True,    # subscribe to synchronized RGB-D image
+        'subscribe_scan':         True,    # subscribe to the lidar
+        'use_action_for_goal':    True,    # use action server for Nav2 goals
+        'odom_sensor_sync':       True,    # synchronize odometry with sensors
+        'Mem/NotLinkedNodesKept': 'false', # do not keep unlinked nodes in memory
+        'Grid/RangeMin':          '0.7',   # ignore lidar points <0.7m (robot body)
+        'RGBD/OptimizeMaxError':  '2',     # reject loop closures with high error
+        'Grid/DepthMin':          '0.5',   # ignore depth points <0.5m
+        'Grid/DepthMax':          '5.0',   # ignore depth points >5m
+        'Mem/SaveDepth16Format':  'false', # use float32 depth (meters), not uint16 (mm)
     }
 
-    # Parámetros compartidos entre todos los nodos
+    # Shared parameters for all nodes
     shared_parameters = {
-        'frame_id':                      'base_link',  # frame base del robot
-        'use_sim_time':                  use_sim_time, # reloj de Isaac Sim
-        'odom_frame_id':                 'odom',       # frame de odometría
-        'tf_tolerance':                  1.0,          # tolerancia TF aumentada para sim
-        'wait_for_transform':            1.0,          # espera TF aumentada para sim
-        'Reg/Strategy':                  '1',          # ICP para loop closure
-        'Reg/Force3DoF':                 'true',       # SLAM 2D, robot en plano horizontal
+        'frame_id':                      'base_link',  # robot base frame
+        'use_sim_time':                  use_sim_time, # Isaac Sim clock
+        'odom_frame_id':                 'odom',       # odometry frame
+        'tf_tolerance':                  1.0,          # increased TF tolerance for sim
+        'wait_for_transform':            1.0,          # increased TF wait for sim
+        'Reg/Strategy':                  '1',          # ICP for loop closure
+        'Reg/Force3DoF':                 'true',       # 2D SLAM, robot on horizontal plane
         'Mem/NotLinkedNodesKept':        'false',
-        'Icp/PointToPlaneMinComplexity': '0.04',       # robusto en pasillos largos
-        'Icp/MaxTranslation':            '1',          # rechazar ICP con traslación >1m
+        'Icp/PointToPlaneMinComplexity': '0.04',       # robust in long corridors
+        'Icp/MaxTranslation':            '1',          # reject ICP with translation >1m
     }
 
     # ── Remappings ────────────────────────────────────────────────────────────
-    # Conecta los topics internos de RTAB-Map con los topics reales de Isaac Sim
+    # Connect RTAB-Map internal topics to Isaac Sim topics
     remappings = [
-        ('odom',            '/odom'),        # wheel odometry de Isaac Sim
+        ('odom',            '/odom'),        # wheel odometry from Isaac Sim
         ('scan',            '/scan'),        # lidar
-        ('rgb/image',       '/rgb'),         # imagen de color
-        ('rgb/camera_info', '/camera_info'), # calibración de la cámara
-        ('depth/image',     '/depth'),       # imagen de profundidad
+        ('rgb/image',       '/rgb'),         # color image
+        ('rgb/camera_info', '/camera_info'), # camera calibration
+        ('depth/image',     '/depth'),       # depth image
     ]
 
-    # ── Nodos ─────────────────────────────────────────────────────────────────
+    # ── Nodes ─────────────────────────────────────────────────────────────────
 
-    # Nodo 1: RGBD Sync
-    # Sincroniza RGB + Depth en un único mensaje RGBD
+    # Node 1: RGBD Sync
+    # Synchronizes RGB + Depth into a single RGBD message
     node_rgbd_sync = Node(
         package='rtabmap_sync',
         executable='rgbd_sync',
@@ -125,10 +96,10 @@ def generate_launch_description():
         }],
         remappings=remappings)
 
-    # Nodo 2: RTAB-Map SLAM
-    # Construye el mapa incrementalmente mientras el robot explora
-    # Solo se lanza si localization:=false (modo por defecto)
-    # -d flag: borra la base de datos al inicio (mapa nuevo cada sesión)
+    # Node 2: RTAB-Map SLAM
+    # Builds the map incrementally while the robot explores
+    # Launched only if localization:=false (default mode)
+    # -d flag: clears the database on start (new map each session)
     node_rtabmap_slam = Node(
         condition=UnlessCondition(localization),
         package='rtabmap_slam',
@@ -140,10 +111,10 @@ def generate_launch_description():
         remappings=remappings,
         arguments=['-d'])
 
-    # Nodo 3: RTAB-Map Localización
-    # Carga el mapa ya construido y localiza el robot en él
-    # NO actualiza el mapa
-    # Solo se lanza si localization:=true
+    # Node 3: RTAB-Map Localization
+    # Loads an existing map and localizes the robot within it
+    # Does NOT update the map
+    # Launched only if localization:=true
     node_rtabmap_localization = Node(
         condition=IfCondition(localization),
         package='rtabmap_slam',
@@ -157,9 +128,9 @@ def generate_launch_description():
         }],
         remappings=remappings)
 
-    # Nodo 4: RTAB-Map Viz
-    # Ventana de visualización 3D del mapa, grafo y odometría
-    # Solo se lanza si rtabmap_viz:=true (modo por defecto)
+    # Node 4: RTAB-Map Viz
+    # 3D visualization window for map, graph, and odometry
+    # Launched only if rtabmap_viz:=true (default mode)
     node_rtabmap_viz = Node(
         condition=IfCondition(rtabmap_viz),
         package='rtabmap_viz',
@@ -170,14 +141,14 @@ def generate_launch_description():
         parameters=[rtabmap_parameters, shared_parameters],
         remappings=remappings)
 
-    # ── Ensamblar todo en LaunchDescription ───────────────────────────────────
+    # ── Assemble everything into LaunchDescription ───────────────────────────
     return LaunchDescription([
-        # Argumentos primero
+        # Arguments first
         arg_use_sim_time,
         arg_localization,
         arg_robot_ns,
         arg_rtabmap_viz,
-        # Nodos después
+        # Nodes after
         node_rgbd_sync,
         node_rtabmap_slam,
         node_rtabmap_localization,
