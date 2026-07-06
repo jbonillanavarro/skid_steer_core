@@ -68,6 +68,8 @@ def generate_launch_description():
         'Mem/NotLinkedNodesKept':        'false',
         'Icp/PointToPlaneMinComplexity': '0.04',       # robust in long corridors
         'Icp/MaxTranslation':            '1',          # reject ICP with translation >1m
+        'map_frame_id': 'world',
+        'publish_tf':         False, 
     }
 
     # ── Remappings ────────────────────────────────────────────────────────────
@@ -125,6 +127,7 @@ def generate_launch_description():
         parameters=[rtabmap_parameters, shared_parameters, {
             'Mem/IncrementalMemory':  'False', # no añade nodos nuevos al mapa
             'Mem/InitWMWithAllNodes': 'True',  # carga el mapa completo en memoria
+            'map_frame_id': 'world',
         }],
         remappings=remappings)
 
