@@ -42,6 +42,10 @@ def generate_launch_description():
                 'subscribe_rgbd': True,    # ...usamos el empaquetado de rgbd_sync
                 'subscribe_odom_info': False, # Porque usamos tu odometría estándar
                 'use_sim_time': True,
+                'cloud_max_depth': 20.0,
+                'Grid/MaxObstacleHeight': '4.0',
+                'Grid/RangeMax': '20.0',
+                'Grid/RayTracing': 'true',
             }],
             remappings=[
                 # (Lo que RTAB-Map pide , Lo que Isaac Sim publica/Genera)
