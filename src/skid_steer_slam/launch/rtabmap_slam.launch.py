@@ -35,6 +35,9 @@ def generate_launch_description():
                 'Grid/MaxObstacleHeight': '4.0',
                 'Grid/RangeMax': '20.0',
                 'Grid/RayTracing': 'true',
+                'Rtabmap/DetectionRate': '0.5',
+                'qos_overrides./map.publisher.durability': 'transient_local',
+                'qos_overrides./map.publisher.reliability': 'reliable',
             }],
             remappings=[
                 ('odom', '/odom'),
