@@ -32,7 +32,7 @@ def generate_launch_description():
                 'subscribe_odom_info': False,
                 'use_sim_time': True,
                 'cloud_max_depth': 20.0,
-                'Grid/MaxObstacleHeight': '4.0',
+                'Grid/MaxObstacleHeight': '1.5',
                 'Grid/RangeMax': '20.0',
                 'Grid/RayTracing': 'true',
                 'Rtabmap/DetectionRate': '0.5',
