@@ -26,7 +26,7 @@ controller_server:
       vx_std: 0.3
       vy_std: 0.2
       wz_std: 0.45
-      vx_max: 5.0
+      vx_max: 1.2
       vx_min: -0.35
       vy_max: 0.0
       wz_max: 1.5
@@ -125,8 +125,8 @@ local_costmap:
           raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0
-        inflation_radius: 0.35
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.5
       always_send_full_costmap: true
 
 # Costmap global: usa el mapa de ocupacion que ya publica RTAB-Map (/map)
@@ -165,8 +165,8 @@ global_costmap:
           raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0
-        inflation_radius: 0.30
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.45
       always_send_full_costmap: true
 
 planner_server:
@@ -215,7 +215,7 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [5.0, 0.0, 1.5]
+    max_velocity: [1.2, 0.0, 1.5]
     min_velocity: [-1.0, 0.0, -1.5]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
