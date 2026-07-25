@@ -35,7 +35,7 @@ def generate_launch_description():
                 'Grid/MaxObstacleHeight': '1.5',
                 'Grid/RangeMax': '20.0',
                 'Grid/RayTracing': 'true',
-                'Rtabmap/DetectionRate': '0.5',
+                'Rtabmap/DetectionRate': '1.0',
                 'qos_overrides./map.publisher.durability': 'transient_local',
                 'qos_overrides./map.publisher.reliability': 'reliable',
             }],
