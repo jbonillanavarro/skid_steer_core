@@ -1,0 +1,66 @@
+PROJECT PROBLEMS AND SOLUTIONS
+=====================================
+
+This file tracks problems found during development and how they were
+solved. An entry is only added once the problem is confirmed as
+resolved and working correctly.
+
+Entry format:
+
+[DATE] Problem title
+Symptom: what was observed
+Cause: why it was happening
+Solution: what was changed to fix it
+-------------------------------------------------
+
+[2026-08-04] explore_lite completely ignored "orientation_scale"
+Symptom: no matter how high orientation_scale was set in
+explore_params.yaml (tested even with extreme values like 50 and 100),
+the robot kept turning towards side gaps/frontiers exactly the same as
+before, with no difference in behavior.
+Cause: reviewing the m-explore-ros2 source code (explore.cpp and
+frontier_search.cpp), orientation_scale_ was declared and read from the
+parameter, but only used to set the goal's final orientation on arrival
+(which way the robot ends up facing), never in the cost calculation
+that decides WHICH frontier gets picked. The real cost was only
+potential_scale*distance - gain_scale*size, with no turning term at
+all.
+Solution: patched Explore::makePlan() in explore.cpp to add a cost term
+proportional to orientation_scale_ * |angle between the robot's current
+heading and the frontier|, reusing the yaw from
+costmap_client_.getRobotPose(). Verified with a diagnostic log
+(RCLCPP_INFO) that the new code actually runs, and after rebuilding
+(colcon build --packages-select explore_lite) and relaunching the
+process from scratch, frontier costs are now clearly differentiated by
+how much turning they require (e.g. ~9 for continuing straight vs.
+>100 for ones requiring a turn), confirming the parameter now has a
+real effect.
+-------------------------------------------------
+
+[2026-08-05] frontier_search used straight-line distance instead of real path distance
+Symptom: in the maze, explore_lite sometimes preferred a frontier that
+looks "close" on the map but is actually behind a wall and requires a
+long detour, while discarding another one that's genuinely closer by
+the real path. This also contributed to it switching goals mid-transit
+(a far-but-straight-line frontier looked cheaper than the one already
+being pursued).
+Cause: in frontier_search.cpp, Frontier::min_distance was computed with
+Pythagoras (straight line) from the robot's position to the frontier
+cell, completely ignoring any walls in between. This is a classic
+simplification in frontier-exploration algorithms (it ships this way by
+default, designed for open environments like offices/warehouses where
+it's barely noticeable); a maze is exactly the adversarial case that
+breaks it, since it maximizes the gap between "close on the map" and
+"actually close."
+Solution: took advantage of the fact that FrontierSearch::searchFrom's
+outer BFS already only traverses traversable cells (respects walls) to
+discover frontiers. Added an accumulated-distance array to that BFS
+(path_distance[neighbor] = path_distance[current] + resolution), and
+that real (path-following, not straight-line) distance is now passed
+into buildNewFrontier() and used as min_distance. Compiles without
+errors (colcon build --packages-select explore_lite). Note: it's still
+a 4-connected approximation (Manhattan-style, no diagonals), more
+faithful than straight-line but not identical to NavFn's actual plan.
+-------------------------------------------------
+
+
