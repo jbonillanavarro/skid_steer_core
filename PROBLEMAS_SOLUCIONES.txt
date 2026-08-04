@@ -1,0 +1,65 @@
+PROBLEMAS Y SOLUCIONES DEL PROYECTO
+=====================================
+
+Este archivo recoge los problemas encontrados durante el desarrollo y como
+se solucionaron. Solo se anade una entrada cuando el problema esta
+confirmado como resuelto y funcionando correctamente.
+
+Formato de cada entrada:
+
+[FECHA] Titulo del problema
+Sintoma: que se observaba
+Causa: por que pasaba
+Solucion: que se cambio para arreglarlo
+-------------------------------------------------
+
+[2026-08-04] explore_lite ignoraba por completo "orientation_scale"
+Sintoma: por mucho que se subiera orientation_scale en explore_params.yaml
+(probado hasta con valores extremos como 50 y 100), el robot seguia
+girando hacia huecos/fronteras laterales exactamente igual que antes,
+sin ninguna diferencia de comportamiento.
+Causa: revisando el codigo fuente de m-explore-ros2 (explore.cpp y
+frontier_search.cpp), orientation_scale_ se declaraba y se leia del
+parametro, pero solo se usaba para fijar la orientacion final del goal
+al llegar (hacia donde queda mirando el robot), nunca para el calculo
+de coste que decide QUE frontera se elige. El coste real era
+unicamente potential_scale*distancia - gain_scale*tamano, sin ningun
+termino de giro.
+Solucion: se parcheo Explore::makePlan() en explore.cpp para anadir un
+termino de coste proporcional a orientation_scale_ * |angulo entre el
+rumbo actual del robot y la frontera|, reutilizando el propio yaw de
+costmap_client_.getRobotPose(). Se verifico con un log de diagnostico
+(RCLCPP_INFO) que el codigo nuevo se ejecuta, y tras recompilar
+(colcon build --packages-select explore_lite) y relanzar el proceso
+desde cero, los costes de las fronteras quedan claramente diferenciados
+segun cuanto giro requieren (ej. ~9 la de seguir recto vs. >100 las que
+requieren giro), confirmando que el parametro ya tiene efecto real.
+-------------------------------------------------
+
+[2026-08-05] frontier_search usaba distancia en linea recta, no la real por el pasillo
+Sintoma: en el laberinto, explore_lite a veces prefiere una frontera que
+en el mapa parece "cerca" pero que en realidad esta detras de una pared
+y exige un rodeo largo, mientras descarta otra genuinamente mas cercana
+por el camino real. Tambien contribuia a que cambiase de goal a mitad
+de trayecto (una frontera lejana-pero-recta parecia mas barata que la
+que ya se estaba persiguiendo).
+Causa: en frontier_search.cpp, Frontier::min_distance se calculaba con
+Pitagoras (linea recta) desde la posicion del robot hasta la celda de
+la frontera, ignorando por completo las paredes de por medio. Es una
+simplificacion clasica de los algoritmos de exploracion por fronteras
+(viene asi de fabrica en el paquete, pensada para entornos abiertos
+tipo oficina/almacen donde apenas se nota); un laberinto es justo el
+caso adversarial que la rompe, porque maximiza la diferencia entre
+"cerca en el mapa" y "cerca de verdad".
+Solucion: se aprovecho que el BFS externo de FrontierSearch::searchFrom
+ya recorre unicamente celdas transitables (respeta paredes) para
+descubrir las fronteras. Se le anadio a ese BFS un array de distancia
+acumulada (path_distance[vecino] = path_distance[actual] + resolucion),
+y esa distancia real (por el camino, no en linea recta) es la que ahora
+se pasa a buildNewFrontier() y se usa como min_distance. Compila sin
+errores (colcon build --packages-select explore_lite). Nota: sigue
+siendo una aproximacion 4-conectada (tipo Manhattan, sin diagonales),
+mas fiel que la linea recta pero no identica al plan real de NavFn.
+-------------------------------------------------
+
+

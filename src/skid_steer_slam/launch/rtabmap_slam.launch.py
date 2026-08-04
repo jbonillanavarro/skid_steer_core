@@ -24,7 +24,7 @@ def generate_launch_description():
             executable='rtabmap',
             name='rtabmap',
             output='screen',
-            arguments=['-d'], 
+            arguments=['-d'],
             parameters=[{
                 'frame_id': 'base_link',
                 'subscribe_depth': False,
@@ -33,7 +33,7 @@ def generate_launch_description():
                 'use_sim_time': True,
                 'cloud_max_depth': 20.0,
                 'Grid/MaxObstacleHeight': '1.5',
-                'Grid/RangeMax': '6.0',
+                'Grid/RangeMax': '4.0',
                 'Grid/RayTracing': 'true',
                 'Rtabmap/DetectionRate': '1.0',
                 'Reg/Force3DoF': 'true',

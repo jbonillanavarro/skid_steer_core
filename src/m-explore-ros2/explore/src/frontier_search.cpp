@@ -47,6 +47,11 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
   // initialize flag arrays to keep track of visited and frontier cells
   std::vector<bool> frontier_flag(size_x_ * size_y_, false);
   std::vector<bool> visited_flag(size_x_ * size_y_, false);
+  // real path distance (through free cells only, following the 4-connected
+  // BFS) from the robot to each visited cell -- used instead of straight
+  // line distance so a frontier hidden behind a wall doesn't look "close"
+  // just because it is close as the crow flies.
+  std::vector<double> path_distance(size_x_ * size_y_, 0.0);
 
   // initialize breadth first search
   std::queue<unsigned int> bfs;
@@ -60,6 +65,7 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
     RCLCPP_WARN(logger_, "[FrontierSearch] Could not find nearby clear cell to start search");
   }
   visited_flag[bfs.front()] = true;
+  path_distance[bfs.front()] = 0.0;
 
   while (!bfs.empty()) {
     unsigned int idx = bfs.front();
@@ -72,12 +78,15 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
       // convention nav2 planners use, not just strictly non-increasing cost)
       if (map_[nbr] <= MAX_NON_OBSTACLE && !visited_flag[nbr]) {
         visited_flag[nbr] = true;
+        path_distance[nbr] = path_distance[idx] + costmap_->getResolution();
         bfs.push(nbr);
         // check if cell is new frontier cell (unvisited, NO_INFORMATION, free
         // neighbour)
       } else if (isNewFrontierCell(nbr, frontier_flag)) {
         frontier_flag[nbr] = true;
-        Frontier new_frontier = buildNewFrontier(nbr, pos, frontier_flag);
+        double entry_distance = path_distance[idx] + costmap_->getResolution();
+        Frontier new_frontier =
+            buildNewFrontier(nbr, pos, frontier_flag, entry_distance);
         if (new_frontier.size * costmap_->getResolution() >=
             min_frontier_size_) {
           frontier_list.push_back(new_frontier);
@@ -99,14 +108,19 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
 
 Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
                                           unsigned int reference,
-                                          std::vector<bool>& frontier_flag)
+                                          std::vector<bool>& frontier_flag,
+                                          double path_distance)
 {
   // initialize frontier structure
   Frontier output;
   output.centroid.x = 0;
   output.centroid.y = 0;
   output.size = 1;
-  output.min_distance = std::numeric_limits<double>::infinity();
+  // real distance through free cells to this frontier's entry point (the
+  // closest point of the frontier to the robot, by construction of the
+  // outer BFS), instead of straight-line distance which ignores walls.
+  output.min_distance = path_distance;
+  double closest_local = std::numeric_limits<double>::infinity();
 
   // record initial contact point for frontier
   unsigned int ix, iy;
@@ -150,12 +164,16 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
         output.centroid.x += wx;
         output.centroid.y += wy;
 
-        // determine frontier's distance from robot, going by closest gridcell
-        // to robot
+        // pick a representative "middle" point of this frontier cluster
+        // (purely local choice within the cluster, straight-line distance
+        // is fine here since it never crosses a wall -- the cluster is one
+        // connected blob of unknown cells). output.min_distance itself is
+        // NOT touched here anymore: it already holds the real path
+        // distance to the frontier's entry point, set from the outer BFS.
         double distance = sqrt(pow((double(reference_x) - double(wx)), 2.0) +
                                pow((double(reference_y) - double(wy)), 2.0));
-        if (distance < output.min_distance) {
-          output.min_distance = distance;
+        if (distance < closest_local) {
+          closest_local = distance;
           output.middle.x = wx;
           output.middle.y = wy;
         }

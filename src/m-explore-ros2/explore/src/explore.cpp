@@ -67,6 +67,7 @@ Explore::Explore()
   this->declare_parameter<bool>("visualize", false);
   this->declare_parameter<float>("potential_scale", 1e-3);
   this->declare_parameter<float>("orientation_scale", 0.0);
+  this->declare_parameter<float>("commitment_scale", 0.0);
   this->declare_parameter<float>("gain_scale", 1.0);
   this->declare_parameter<float>("min_frontier_size", 0.5);
   this->declare_parameter<bool>("return_to_init", false);
@@ -76,6 +77,7 @@ Explore::Explore()
   this->get_parameter("visualize", visualize_);
   this->get_parameter("potential_scale", potential_scale_);
   this->get_parameter("orientation_scale", orientation_scale_);
+  this->get_parameter("commitment_scale", commitment_scale_);
   this->get_parameter("gain_scale", gain_scale_);
   this->get_parameter("min_frontier_size", min_frontier_size);
   this->get_parameter("return_to_init", return_to_init_);
@@ -232,6 +234,39 @@ void Explore::makePlan()
   auto pose = costmap_client_.getRobotPose();
   // get frontiers sorted according to cost
   auto frontiers = search_.searchFrom(pose.position);
+
+  // penalize frontiers that require a sharp turn from the robot's current
+  // heading, so it prefers continuing forward over spinning to chase a
+  // marginally cheaper frontier off to the side or behind.
+  //
+  // also reward the frontier we are already pursuing, growing the bonus
+  // as real progress is made towards it (committed_goal_initial_distance_
+  // minus how far it is now). this stops explore from abandoning a goal
+  // it is already close to for something that only looks marginally
+  // better because the map changed slightly mid-transit.
+  if (orientation_scale_ > 0.0 || commitment_scale_ > 0.0) {
+    double yaw = 2.0 * std::atan2(pose.orientation.z, pose.orientation.w);
+    for (auto& f : frontiers) {
+      if (orientation_scale_ > 0.0) {
+        double angle_to_frontier = std::atan2(f.centroid.y - pose.position.y,
+                                               f.centroid.x - pose.position.x);
+        double angle_diff = angle_to_frontier - yaw;
+        angle_diff = std::atan2(std::sin(angle_diff), std::cos(angle_diff));
+        f.cost += orientation_scale_ * std::abs(angle_diff);
+      }
+      if (commitment_scale_ > 0.0 && goal_active_ &&
+          same_point(prev_goal_, f.centroid)) {
+        double progress = committed_goal_initial_distance_ - f.min_distance;
+        f.cost -= commitment_scale_ * std::max(0.0, progress);
+      }
+    }
+    std::sort(frontiers.begin(), frontiers.end(),
+              [](const frontier_exploration::Frontier& f1,
+                 const frontier_exploration::Frontier& f2) {
+                return f1.cost < f2.cost;
+              });
+  }
+
   RCLCPP_DEBUG(logger_, "found %lu frontiers", frontiers.size());
   for (size_t i = 0; i < frontiers.size(); ++i) {
     RCLCPP_DEBUG(logger_, "frontier %zd cost: %f", i, frontiers[i].cost);
@@ -269,6 +304,12 @@ void Explore::makePlan()
 
   // time out if we are not making any progress
   bool same_goal = same_point(prev_goal_, target_position);
+
+  if (!same_goal) {
+    // brand new goal: reset the reference distance the commitment bonus
+    // grows from.
+    committed_goal_initial_distance_ = frontier->min_distance;
+  }
 
   prev_goal_ = target_position;
   if (!same_goal || prev_distance_ > frontier->min_distance) {

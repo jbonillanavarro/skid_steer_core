@@ -6,10 +6,11 @@ explore_node:
     costmap_updates_topic: /map_updates
     return_to_init: false
     visualize: true
-    planner_frequency: 0.5
-    progress_timeout: 30.0
-    potential_scale: 4.0
-    orientation_scale: 0.5
-    gain_scale: 1.0
+    planner_frequency: 0.2
+    progress_timeout: 50.0
+    potential_scale: 0.3
+    orientation_scale: 100.0
+    commitment_scale: 5.0
+    gain_scale: 2.0
     transform_tolerance: 0.3
-    min_frontier_size: 0.5
+    min_frontier_size: 1.5

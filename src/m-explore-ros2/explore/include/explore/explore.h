@@ -130,6 +130,11 @@ private:
   std::vector<geometry_msgs::msg::Point> frontier_blacklist_;
   geometry_msgs::msg::Point prev_goal_;
   double prev_distance_;
+  // distance to the currently pursued goal at the moment it was first
+  // chosen; used to grow a "commitment" bonus as the robot makes real
+  // progress towards it, so it isn't abandoned for marginally cheaper
+  // alternatives discovered mid-transit.
+  double committed_goal_initial_distance_{0.0};
   rclcpp::Time last_progress_;
   size_t last_markers_count_;
 
@@ -138,7 +143,7 @@ private:
 
   // parameters
   double planner_frequency_;
-  double potential_scale_, orientation_scale_, gain_scale_;
+  double potential_scale_, orientation_scale_, gain_scale_, commitment_scale_;
   double progress_timeout_;
   bool visualize_;
   bool return_to_init_;

@@ -53,7 +53,8 @@ protected:
    * @return new frontier
    */
   Frontier buildNewFrontier(unsigned int initial_cell, unsigned int reference,
-                            std::vector<bool>& frontier_flag);
+                            std::vector<bool>& frontier_flag,
+                            double path_distance);
 
   /**
    * @brief isNewFrontierCell Evaluate if candidate cell is a valid candidate
