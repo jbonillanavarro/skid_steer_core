@@ -128,6 +128,21 @@ if(BUILD_TESTING)
     ${geometry_msgs_TARGETS}
   )
 
+  ament_add_gtest(test_frontier_search
+    test/test_frontier_search.cpp
+    src/frontier_search.cpp
+  )
+
+  target_include_directories(test_frontier_search PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+
+  target_link_libraries(test_frontier_search
+    ${geometry_msgs_TARGETS}
+    nav2_costmap_2d::nav2_costmap_2d_core
+    rclcpp::rclcpp
+  )
+
 endif()
 
 ament_export_dependencies(

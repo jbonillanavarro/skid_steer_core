@@ -38,15 +38,26 @@
 
 #include <explore/explore.h>
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <thread>
 
+// Identity test for "this is still the same goal/frontier as before".
+// The tolerance matters more than it looks: a frontier's centroid drifts by
+// tens of centimetres between planning cycles as the sensor eats into the
+// unknown region and the cluster grows, splits or merges. Comparing it at
+// centimetre precision means the goal is treated as brand new almost every
+// cycle, which silently disables any commitment logic and re-sends goals to
+// Nav2 for no reason. Tolerance is a parameter (goal_identity_tolerance).
 inline static bool same_point(const geometry_msgs::msg::Point& one,
-                              const geometry_msgs::msg::Point& two)
+                              const geometry_msgs::msg::Point& two,
+                              double tolerance)
 {
   double dx = one.x - two.x;
   double dy = one.y - two.y;
   double dist = sqrt(dx * dx + dy * dy);
-  return dist < 0.01;
+  return dist < tolerance;
 }
 
 namespace explore
@@ -68,6 +79,8 @@ Explore::Explore()
   this->declare_parameter<float>("potential_scale", 1e-3);
   this->declare_parameter<float>("orientation_scale", 0.0);
   this->declare_parameter<float>("commitment_scale", 0.0);
+  this->declare_parameter<float>("commitment_hysteresis", 0.0);
+  this->declare_parameter<float>("goal_identity_tolerance", 0.01);
   this->declare_parameter<float>("gain_scale", 1.0);
   this->declare_parameter<float>("min_frontier_size", 0.5);
   this->declare_parameter<bool>("return_to_init", false);
@@ -78,6 +91,8 @@ Explore::Explore()
   this->get_parameter("potential_scale", potential_scale_);
   this->get_parameter("orientation_scale", orientation_scale_);
   this->get_parameter("commitment_scale", commitment_scale_);
+  this->get_parameter("commitment_hysteresis", commitment_hysteresis_);
+  this->get_parameter("goal_identity_tolerance", goal_identity_tolerance_);
   this->get_parameter("gain_scale", gain_scale_);
   this->get_parameter("min_frontier_size", min_frontier_size);
   this->get_parameter("return_to_init", return_to_init_);
@@ -239,18 +254,23 @@ void Explore::makePlan()
   // heading, so it prefers continuing forward over spinning to chase a
   // marginally cheaper frontier off to the side or behind.
   //
-  // also reward the frontier we are already pursuing, growing the bonus
-  // as real progress is made towards it (committed_goal_initial_distance_
-  // minus how far it is now). this stops explore from abandoning a goal
-  // it is already close to for something that only looks marginally
-  // better because the map changed slightly mid-transit.
+  // also reward the frontier we are already pursuing, both with a fixed head
+  // start the moment it is picked (commitment_hysteresis_) and with a bonus
+  // that grows as real progress is made towards it. the fixed part is what
+  // resolves ambiguity at the moment of choosing: when every option is far
+  // away the costs sit close together and jitter between cycles, so without
+  // a margin the ranking flips on noise and the robot dithers instead of
+  // committing.
+  const double yaw = 2.0 * std::atan2(pose.orientation.z, pose.orientation.w);
   if (orientation_scale_ > 0.0 || commitment_scale_ > 0.0) {
-    double yaw = 2.0 * std::atan2(pose.orientation.z, pose.orientation.w);
     for (auto& f : frontiers) {
-      if (orientation_scale_ > 0.0) {
-        double angle_to_frontier = std::atan2(f.centroid.y - pose.position.y,
-                                               f.centroid.x - pose.position.x);
-        double angle_diff = angle_to_frontier - yaw;
+      // approach_yaw is the heading of the real (wall-respecting) route to
+      // the frontier, so a frontier that looks straight ahead but is only
+      // reachable by backtracking is now correctly charged for the U-turn.
+      // NaN means the frontier is essentially on top of the robot, where no
+      // meaningful heading exists: no penalty rather than a made-up one.
+      if (orientation_scale_ > 0.0 && std::isfinite(f.approach_yaw)) {
+        double angle_diff = f.approach_yaw - yaw;
         angle_diff = std::atan2(std::sin(angle_diff), std::cos(angle_diff));
         // the closer the frontier, the more a required turn matters (avoid
         // spinning for a nearby side option); the farther it is, the less
@@ -262,9 +282,15 @@ void Explore::makePlan()
         f.cost += orientation_scale_ * (angle_diff * angle_diff) / (1.0 + f.min_distance);
       }
       if (commitment_scale_ > 0.0 && goal_active_ &&
-          same_point(prev_goal_, f.centroid)) {
+          same_point(prev_goal_, f.centroid, goal_identity_tolerance_)) {
+        // hysteresis is expressed in metres of virtual head start, so it
+        // rides on the same scale as progress: a challenger has to be worth
+        // more than "commitment_scale_ * commitment_hysteresis_" to win.
+        // it erodes if the robot actually loses ground on the goal (negative
+        // progress), so an unreachable goal cannot lock the robot in.
         double progress = committed_goal_initial_distance_ - f.min_distance;
-        f.cost -= commitment_scale_ * std::max(0.0, progress);
+        f.cost -= commitment_scale_ *
+                  std::max(0.0, progress + commitment_hysteresis_);
       }
     }
     std::sort(frontiers.begin(), frontiers.end(),
@@ -276,8 +302,20 @@ void Explore::makePlan()
 
   RCLCPP_DEBUG(logger_, "found %lu frontiers", frontiers.size());
   for (size_t i = 0; i < frontiers.size(); ++i) {
-    RCLCPP_DEBUG(logger_, "frontier %zd cost: %f (size=%u cells, dist=%f m)",
-                 i, frontiers[i].cost, frontiers[i].size, frontiers[i].min_distance);
+    const auto& f = frontiers[i];
+    double turn = std::numeric_limits<double>::quiet_NaN();
+    if (std::isfinite(f.approach_yaw)) {
+      turn = std::atan2(std::sin(f.approach_yaw - yaw),
+                        std::cos(f.approach_yaw - yaw)) * 180.0 / M_PI;
+    }
+    RCLCPP_DEBUG(logger_,
+                 "frontier %zd cost: %f (size=%u cells, dist=%f m, turn=%.0f "
+                 "deg%s)",
+                 i, f.cost, f.size, f.min_distance, turn,
+                 (goal_active_ &&
+                  same_point(prev_goal_, f.centroid, goal_identity_tolerance_))
+                     ? ", COMMITTED"
+                     : "");
   }
 
   if (frontiers.empty()) {
@@ -311,7 +349,8 @@ void Explore::makePlan()
   geometry_msgs::msg::Point target_position = frontier->centroid;
 
   // time out if we are not making any progress
-  bool same_goal = same_point(prev_goal_, target_position);
+  bool same_goal =
+      same_point(prev_goal_, target_position, goal_identity_tolerance_);
 
   if (!same_goal) {
     // brand new goal: reset the reference distance the commitment bonus

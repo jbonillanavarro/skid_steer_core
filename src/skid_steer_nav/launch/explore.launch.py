@@ -18,6 +18,13 @@ def generate_launch_description():
             executable='explore',
             parameters=[params_file],
             output='screen',
-            arguments=['--ros-args', '--log-level', 'explore_node:=debug'],
+            arguments=[
+                '--ros-args',
+                '--log-level', 'explore_node:=debug',
+                # el logger de rclcpp_action es hijo de explore_node y hereda
+                # su nivel, llenando la salida de "Received status for unknown
+                # goal" cada vez que llega el estado de un goal ya preemptado
+                '--log-level', 'explore_node.rclcpp_action:=info',
+            ],
         ),
     ])

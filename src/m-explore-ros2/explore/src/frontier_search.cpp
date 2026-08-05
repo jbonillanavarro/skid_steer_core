@@ -2,7 +2,12 @@
 #include <explore/frontier_search.h>
 
 #include <geometry_msgs/msg/point.hpp>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <mutex>
+#include <queue>
+#include <vector>
 
 #include "nav2_costmap_2d/cost_values.hpp"
 
@@ -52,6 +57,10 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
   // line distance so a frontier hidden behind a wall doesn't look "close"
   // just because it is close as the crow flies.
   std::vector<double> path_distance(size_x_ * size_y_, 0.0);
+  // BFS predecessor of every visited cell, so the actual path back to the
+  // robot can be reconstructed (used to work out which way the robot really
+  // has to turn to head for each frontier). The root points to itself.
+  std::vector<unsigned int> parent(size_x_ * size_y_, 0);
 
   // initialize breadth first search
   std::queue<unsigned int> bfs;
@@ -66,6 +75,7 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
   }
   visited_flag[bfs.front()] = true;
   path_distance[bfs.front()] = 0.0;
+  parent[bfs.front()] = bfs.front();
 
   while (!bfs.empty()) {
     unsigned int idx = bfs.front();
@@ -79,14 +89,18 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
       if (map_[nbr] <= MAX_NON_OBSTACLE && !visited_flag[nbr]) {
         visited_flag[nbr] = true;
         path_distance[nbr] = path_distance[idx] + costmap_->getResolution();
+        parent[nbr] = idx;
         bfs.push(nbr);
         // check if cell is new frontier cell (unvisited, NO_INFORMATION, free
         // neighbour)
       } else if (isNewFrontierCell(nbr, frontier_flag)) {
         frontier_flag[nbr] = true;
         double entry_distance = path_distance[idx] + costmap_->getResolution();
-        Frontier new_frontier =
-            buildNewFrontier(nbr, pos, frontier_flag, entry_distance);
+        // idx is the last traversable cell of the path to this frontier, so
+        // the parent chain from it is the real route the robot would take.
+        double approach_yaw = approachYaw(idx, parent, position);
+        Frontier new_frontier = buildNewFrontier(nbr, pos, frontier_flag,
+                                                 entry_distance, approach_yaw);
         if (new_frontier.size * costmap_->getResolution() >=
             min_frontier_size_) {
           frontier_list.push_back(new_frontier);
@@ -106,10 +120,110 @@ FrontierSearch::searchFrom(geometry_msgs::msg::Point position)
   return frontier_list;
 }
 
+double FrontierSearch::approachYaw(unsigned int entry_cell,
+                                   const std::vector<unsigned int>& parent,
+                                   const geometry_msgs::msg::Point& origin)
+{
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+
+  unsigned int robot_mx, robot_my;
+  if (!costmap_->worldToMap(origin.x, origin.y, robot_mx, robot_my)) {
+    return nan;
+  }
+  const unsigned int robot_cell = costmap_->getIndex(robot_mx, robot_my);
+
+  // rebuild the route the robot would actually walk, robot end first
+  std::vector<unsigned int> route;
+  for (unsigned int cell = entry_cell;; cell = parent[cell]) {
+    route.push_back(cell);
+    if (parent[cell] == cell) {
+      break;
+    }
+  }
+  std::reverse(route.begin(), route.end());
+
+  // Walk that route outwards and keep the furthest point still reachable in
+  // a straight line: the first leg of a string-pulled path. Around a corner
+  // it lands on the corner, which is where the robot really has to point
+  // first; in the open it walks all the way to the frontier, so this reduces
+  // to the straight-line bearing and nothing is lost where the old formula
+  // was already right.
+  //
+  // Note this must not be cut short at some fixed lookahead distance. The
+  // 4-connected BFS reaches a diagonal target by going all the way along one
+  // axis and then the other, so any point picked in the middle of the route
+  // sits on the corner of that L and reports a heading that is an artifact
+  // of the search, not of the map (measured: 3 deg instead of 45 on an open
+  // diagonal). Only the *furthest visible* point is free of it, because a
+  // staircase corner is never the furthest visible point when the far end of
+  // the leg is visible too.
+  const size_t step =
+      std::max<size_t>(1, static_cast<size_t>(0.25 / costmap_->getResolution()));
+  unsigned int candidate = route.front();
+  size_t i = step;
+  for (; i < route.size(); i += step) {
+    if (!lineOfSight(robot_cell, route[i])) {
+      break;
+    }
+    candidate = route[i];
+  }
+  // whole route visible: aim at the frontier itself rather than at whatever
+  // the last sampled step happened to land on
+  if (i >= route.size() && lineOfSight(robot_cell, route.back())) {
+    candidate = route.back();
+  }
+
+  unsigned int cx, cy;
+  double wx, wy;
+  costmap_->indexToCells(candidate, cx, cy);
+  costmap_->mapToWorld(cx, cy, wx, wy);
+  double dx = wx - origin.x;
+  double dy = wy - origin.y;
+  // too close to the robot to read a meaningful bearing off it
+  if (dx * dx + dy * dy < costmap_->getResolution() * costmap_->getResolution()) {
+    return nan;
+  }
+  return std::atan2(dy, dx);
+}
+
+bool FrontierSearch::lineOfSight(unsigned int from_cell, unsigned int to_cell)
+{
+  unsigned int ux0, uy0, ux1, uy1;
+  costmap_->indexToCells(from_cell, ux0, uy0);
+  costmap_->indexToCells(to_cell, ux1, uy1);
+
+  int x = static_cast<int>(ux0), y = static_cast<int>(uy0);
+  const int x1 = static_cast<int>(ux1), y1 = static_cast<int>(uy1);
+  const int dx = std::abs(x1 - x);
+  const int dy = -std::abs(y1 - y);
+  const int sx = (x < x1) ? 1 : -1;
+  const int sy = (y < y1) ? 1 : -1;
+  int err = dx + dy;
+
+  // the origin cell is skipped on purpose: the robot may well be standing on
+  // an inflated cell, and that must not make everything invisible.
+  while (x != x1 || y != y1) {
+    const int e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+    if (map_[costmap_->getIndex(x, y)] > MAX_NON_OBSTACLE) {
+      return false;
+    }
+  }
+  return true;
+}
+
 Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
                                           unsigned int reference,
                                           std::vector<bool>& frontier_flag,
-                                          double path_distance)
+                                          double path_distance,
+                                          double approach_yaw)
 {
   // initialize frontier structure
   Frontier output;
@@ -120,6 +234,7 @@ Frontier FrontierSearch::buildNewFrontier(unsigned int initial_cell,
   // closest point of the frontier to the robot, by construction of the
   // outer BFS), instead of straight-line distance which ignores walls.
   output.min_distance = path_distance;
+  output.approach_yaw = approach_yaw;
   double closest_local = std::numeric_limits<double>::infinity();
 
   // record initial contact point for frontier

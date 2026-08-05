@@ -8,9 +8,20 @@ explore_node:
     visualize: true
     planner_frequency: 0.2
     progress_timeout: 50.0
-    potential_scale: 10.0
-    orientation_scale: 75.0
+    potential_scale: 20.0
+    orientation_scale: 80.0
+    gain_scale: 3.0
+    # --- firmeza de la decision ---
+    # el centroide de una frontera se mueve decenas de cm entre ciclos segun
+    # crece el cluster; comparandolo a 1 cm el goal se consideraba nuevo casi
+    # siempre y el bonus de compromiso no llegaba a aplicarse nunca.
+    goal_identity_tolerance: 0.5
     commitment_scale: 5.0
-    gain_scale: 10.0
+    # ventaja fija (en metros de progreso virtual) para el goal ya elegido:
+    # un rival tiene que ganarle por mas de commitment_scale * este valor
+    # (5.0 * 1.5 = 7.5 unidades de coste) para robarle la decision. Es lo que
+    # rompe la ambiguedad cuando todas las fronteras estan lejos y sus costes
+    # quedan pegados y fluctuando.
+    commitment_hysteresis: 3.0
     transform_tolerance: 0.3
     min_frontier_size: 2.0

@@ -144,6 +144,12 @@ private:
   // parameters
   double planner_frequency_;
   double potential_scale_, orientation_scale_, gain_scale_, commitment_scale_;
+  // fixed head start (in metres of virtual progress) given to the goal
+  // already being pursued, so an ambiguous choice between far-away frontiers
+  // with noisy, near-identical costs doesn't flip every planning cycle.
+  double commitment_hysteresis_;
+  // how far apart two goal points may be and still count as the same goal
+  double goal_identity_tolerance_;
   double progress_timeout_;
   bool visualize_;
   bool return_to_init_;
