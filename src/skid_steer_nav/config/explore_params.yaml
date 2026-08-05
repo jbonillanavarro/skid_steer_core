@@ -8,9 +8,9 @@ explore_node:
     visualize: true
     planner_frequency: 0.2
     progress_timeout: 50.0
-    potential_scale: 0.3
-    orientation_scale: 100.0
+    potential_scale: 10.0
+    orientation_scale: 75.0
     commitment_scale: 5.0
-    gain_scale: 2.0
+    gain_scale: 10.0
     transform_tolerance: 0.3
-    min_frontier_size: 1.5
+    min_frontier_size: 2.0

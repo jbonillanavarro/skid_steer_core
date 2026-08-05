@@ -252,7 +252,14 @@ void Explore::makePlan()
                                                f.centroid.x - pose.position.x);
         double angle_diff = angle_to_frontier - yaw;
         angle_diff = std::atan2(std::sin(angle_diff), std::cos(angle_diff));
-        f.cost += orientation_scale_ * std::abs(angle_diff);
+        // the closer the frontier, the more a required turn matters (avoid
+        // spinning for a nearby side option); the farther it is, the less
+        // it matters (you'll have to turn/replan along the way regardless,
+        // so let real distance/size decide among distant candidates).
+        // squared (not linear) so small/moderate turns barely cost anything
+        // while a near-180 degree turn (backtracking) is disproportionately
+        // punished -- a single linear scale can't represent that shape.
+        f.cost += orientation_scale_ * (angle_diff * angle_diff) / (1.0 + f.min_distance);
       }
       if (commitment_scale_ > 0.0 && goal_active_ &&
           same_point(prev_goal_, f.centroid)) {
@@ -269,7 +276,8 @@ void Explore::makePlan()
 
   RCLCPP_DEBUG(logger_, "found %lu frontiers", frontiers.size());
   for (size_t i = 0; i < frontiers.size(); ++i) {
-    RCLCPP_DEBUG(logger_, "frontier %zd cost: %f", i, frontiers[i].cost);
+    RCLCPP_DEBUG(logger_, "frontier %zd cost: %f (size=%u cells, dist=%f m)",
+                 i, frontiers[i].cost, frontiers[i].size, frontiers[i].min_distance);
   }
 
   if (frontiers.empty()) {
