@@ -80,6 +80,7 @@ Explore::Explore()
   this->declare_parameter<float>("orientation_scale", 0.0);
   this->declare_parameter<float>("commitment_scale", 0.0);
   this->declare_parameter<float>("commitment_hysteresis", 0.0);
+  this->declare_parameter<float>("commitment_max", 1e6);
   this->declare_parameter<float>("goal_identity_tolerance", 0.01);
   this->declare_parameter<float>("gain_scale", 1.0);
   this->declare_parameter<float>("min_frontier_size", 0.5);
@@ -92,6 +93,7 @@ Explore::Explore()
   this->get_parameter("orientation_scale", orientation_scale_);
   this->get_parameter("commitment_scale", commitment_scale_);
   this->get_parameter("commitment_hysteresis", commitment_hysteresis_);
+  this->get_parameter("commitment_max", commitment_max_);
   this->get_parameter("goal_identity_tolerance", goal_identity_tolerance_);
   this->get_parameter("gain_scale", gain_scale_);
   this->get_parameter("min_frontier_size", min_frontier_size);
@@ -262,24 +264,57 @@ void Explore::makePlan()
   // a margin the ranking flips on noise and the robot dithers instead of
   // committing.
   const double yaw = 2.0 * std::atan2(pose.orientation.z, pose.orientation.w);
+
+  // First pass: how much the robot really has to turn for each frontier, and
+  // what the cheapest turn on offer is. The penalty below is charged on the
+  // DIFFERENCE against that cheapest turn, not on the absolute angle.
+  //
+  // This is the difference between "turning is expensive" and "turning when
+  // you didn't have to is expensive", and only the second one is what we
+  // want. Measured case: robot nose-in against a dead end, all four frontiers
+  // required 135-171 deg. With an absolute penalty the scale no longer
+  // decides whether to turn (that was forced) but which frontier to turn to,
+  // and since it was also divided by distance it charged 30 units to the one
+  // 28 m away and 264 to the 207-cell one 1.1 m in front: raising the scale
+  // actively pushed the robot into the long u-turn.
+  //
+  // Relative, that case collapses to ~0 penalty for everyone and real
+  // distance/size decide, while in a corridor with a frontier straight ahead
+  // anything behind still pays the full differential. It is also rank-stable:
+  // subtracting the minimum shifts every cost by the same constant, so the
+  // ordering does not jump when the straightest frontier is consumed.
+  std::vector<double> turn_sq(frontiers.size(), 0.0);
+  double min_turn_sq = std::numeric_limits<double>::infinity();
+  for (size_t i = 0; i < frontiers.size(); ++i) {
+    // NaN approach_yaw means the frontier is essentially on top of the robot,
+    // where no meaningful heading exists: left at zero, and kept out of the
+    // minimum so it cannot drag the reference down to zero for everyone.
+    if (!std::isfinite(frontiers[i].approach_yaw)) {
+      continue;
+    }
+    double angle_diff = frontiers[i].approach_yaw - yaw;
+    angle_diff = std::atan2(std::sin(angle_diff), std::cos(angle_diff));
+    turn_sq[i] = angle_diff * angle_diff;
+    min_turn_sq = std::min(min_turn_sq, turn_sq[i]);
+  }
+  if (!std::isfinite(min_turn_sq)) {
+    min_turn_sq = 0.0;
+  }
+
   if (orientation_scale_ > 0.0 || commitment_scale_ > 0.0) {
-    for (auto& f : frontiers) {
-      // approach_yaw is the heading of the real (wall-respecting) route to
-      // the frontier, so a frontier that looks straight ahead but is only
-      // reachable by backtracking is now correctly charged for the U-turn.
-      // NaN means the frontier is essentially on top of the robot, where no
-      // meaningful heading exists: no penalty rather than a made-up one.
-      if (orientation_scale_ > 0.0 && std::isfinite(f.approach_yaw)) {
-        double angle_diff = f.approach_yaw - yaw;
-        angle_diff = std::atan2(std::sin(angle_diff), std::cos(angle_diff));
-        // the closer the frontier, the more a required turn matters (avoid
-        // spinning for a nearby side option); the farther it is, the less
-        // it matters (you'll have to turn/replan along the way regardless,
-        // so let real distance/size decide among distant candidates).
-        // squared (not linear) so small/moderate turns barely cost anything
-        // while a near-180 degree turn (backtracking) is disproportionately
-        // punished -- a single linear scale can't represent that shape.
-        f.cost += orientation_scale_ * (angle_diff * angle_diff) / (1.0 + f.min_distance);
+    for (size_t i = 0; i < frontiers.size(); ++i) {
+      auto& f = frontiers[i];
+      // turn_sq comes from approach_yaw, the heading of the real
+      // (wall-respecting) BFS route, so a frontier that looks straight ahead
+      // but is only reachable by backtracking is correctly charged.
+      //
+      // Squared (not linear) so small/moderate turns barely cost anything
+      // while a near-180 degree turn is disproportionately punished -- a
+      // linear scale cannot represent that shape. No distance discount: a
+      // rotation takes the same time whether the trip is 2 m or 30 m, and
+      // dividing by distance is precisely what made far frontiers immune.
+      if (orientation_scale_ > 0.0) {
+        f.cost += orientation_scale_ * (turn_sq[i] - min_turn_sq);
       }
       if (commitment_scale_ > 0.0 && goal_active_ &&
           same_point(prev_goal_, f.centroid, goal_identity_tolerance_)) {
@@ -288,9 +323,15 @@ void Explore::makePlan()
         // more than "commitment_scale_ * commitment_hysteresis_" to win.
         // it erodes if the robot actually loses ground on the goal (negative
         // progress), so an unreachable goal cannot lock the robot in.
+        //
+        // capped at commitment_max_: uncapped, the bonus grew without limit
+        // (measured: 1240 cost units after 8.4 m of progress, i.e. ~1000
+        // metres of equivalent immunity) and no frontier, however close or
+        // large, could ever take the goal back.
         double progress = committed_goal_initial_distance_ - f.min_distance;
         f.cost -= commitment_scale_ *
-                  std::max(0.0, progress + commitment_hysteresis_);
+                  std::clamp(progress + commitment_hysteresis_, 0.0,
+                             commitment_max_);
       }
     }
     std::sort(frontiers.begin(), frontiers.end(),

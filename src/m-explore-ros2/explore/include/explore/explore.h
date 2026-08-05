@@ -148,6 +148,10 @@ private:
   // already being pursued, so an ambiguous choice between far-away frontiers
   // with noisy, near-identical costs doesn't flip every planning cycle.
   double commitment_hysteresis_;
+  // metres of progress past which the commitment bonus stops growing. without
+  // it the bonus is unbounded and, since it grows far faster than the distance
+  // term, a goal becomes literally unabandonable after a few metres.
+  double commitment_max_;
   // how far apart two goal points may be and still count as the same goal
   double goal_identity_tolerance_;
   double progress_timeout_;
