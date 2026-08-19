@@ -1,0 +1,62 @@
+Main ROS2 nodes:
+- SLAM node (RTAB-MAP)
+
+
+- Navigation node (Nav2) -> Planner: Navfn (Dijkastra); Controller: MPPI (MPC model predictive control)
+
+
+- Exploration node (Explore Lite)
+El explore lite es un paquete que uso para detectar fronteras abiertas sin explorar y cada vez que se detecta una se le añade un coste que se va actualizando basado en la siguiente función: 
+ coste = 0.5 * (25 * d_BFS - 2 * celdas) +  + 20.0 · (θ² − θ²_mín) - −  2.5 · clamp(p + 4.0, 0, 8)
+
+d_BFS es la distancia real, no la euclidea, recorriendo celdas transitables desde el robot hasta llegar a la frontera
+celdas es el número de celdas frontera del grupo. Resta, o sea premia: una frontera grande destapa más mapa por metro recorrido.
+Estos dos parametros son multiplicados por 0.5 ya que el 0.05 es la resolución del mapa, para pasar de celdas a metros.
+
+θ es el ángulo entre el rumbo actual del robot y el rumbo de la ruta BFS real (approach_yaw), no la dirección en línea recta al centroide. Al cuadrado, para que los giros pequeños salgan casi gratis y los de casi 180° se disparen.
+
+Compromiso — commitment_scale: 2.5
+Solo se aplica a la frontera que ya estás persiguiendo (misma meta dentro de goal_identity_tolerance: 0.5 m).
+
+- p = progreso real = distancia cuando la elegiste − distancia actual
+- commitment_hysteresis: 4.0 = ventaja fija desde el instante cero, para romper el empate cuando todos los costes están pegados y fluctuando
+- commitment_max: 8.0 = techo. 2.5 × 8 = 20 unidades ≈ 16 m de ventaja máxima
+
+La funcion por defecto que sigue el paquete del explore lite solo usaba como parametros la distancia euclidea a la frontera y el tamaño de esta. Esta función fue creada en base a lo que pedía el entorno en el que navegaba nuestro jackal. 
+
+
+Solved issues: 
+ el jackal es un robot cuya naturaleza es del tipo skid steer (4 ruedas), gira comandando una velocidad angular distinta a cada rueda (más rápido de un lado que del otro), y como las ruedas no pueden cambiar de ángulo, se ven obligadas a deslizar lateralmente contra el suelo para completar el giro — eso es el derrape (skid). Este derrape hacía que disminuyera la velocidad angular durante los giros, mientras que la lineal no tenía problema. 
+ 
+ Esto causaba que aunque el controlador MPPI funcionara bien, la actuacion que enviaba nunca era la real. Para solucionar esto se creó un nodo con un script de python, que con un controlador PI compensara el error entre la velocidad pedia por el MPPI (/cmd_vel) y la real del robot (nodo Read Prim Attribute en Isaac Sim). 
+ 
+def setup(db):
+    db.internal_state.integral = 0.0
+
+def compute(db):
+    wz_desired = db.inputs.wz_desired
+    wz_real = db.inputs.wz_real
+    dt = db.inputs.dt if db.inputs.dt > 0.0 else 1.0 / 60.0
+    deadband = db.inputs.deadband
+
+    if abs(wz_desired) < deadband:
+        db.internal_state.integral = 0.0
+        db.outputs.wz_corrected = 0.0
+        return
+
+    error = wz_desired - wz_real
+
+    new_integral = db.internal_state.integral + error * dt
+    limit = db.inputs.integral_limit
+    db.internal_state.integral = max(-limit, min(limit, new_integral))
+
+    correction = db.inputs.Kp * error + db.inputs.Ki * db.internal_state.integral
+    db.outputs.wz_corrected = wz_desired + correction
+
+def cleanup(db):
+    db.internal_state.integral = 0.0
+    
+    
+
+
+    
